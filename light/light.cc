@@ -108,6 +108,13 @@ static int lit_file_p;
 /// offset of end of space for litfile data
 static int lit_file_end;
 
+/// start of litfile data
+std::vector<uint32_t> hdr_filebase;
+/// offset of start of free space after litfile data (should be kept a multiple of 12)
+static int hdr_file_p;
+/// offset of end of space for litfile data
+static int hdr_file_end;
+
 /// start of luxfile data
 std::vector<uint8_t> lux_filebase;
 /// offset of start of free space after luxfile data (should be kept a multiple of 12)
@@ -338,6 +345,9 @@ light_settings::light_settings()
       lit2{this, "lit2", [&](source) { write_litfile = lightfile::lit2; }, &experimental_group, "write .lit2 file"},
       bspxlit{this, "bspxlit", [&](source) { write_litfile |= lightfile::bspx; }, &experimental_group,
           "writes rgb data into the bsp itself"},
+      hdr{this, "hdr", [&](source) { write_litfile |= lightfile::external; write_litfile |= lightfile::hdr; }, &experimental_group, "write .lit file as e5bgr9"},
+      bspxhdr{this, "bspxhdr", [&](source) { write_litfile |= lightfile::bspx; write_litfile |= lightfile::hdr; }, &experimental_group,
+          "writes rgb data into the bsp itself as e5bgr9"},
       lux{this, "lux", [&](source) { write_luxfile |= lightfile::external; }, &experimental_group, "write .lux file"},
       bspxlux{this, "bspxlux", [&](source) { write_luxfile |= lightfile::bspx; }, &experimental_group,
           "writes lux data into the bsp itself"},
@@ -484,8 +494,12 @@ void light_settings::postinitialize(int argc, const char **argv)
     } else {
         if (write_litfile & lightfile::external)
             logging::print(".lit colored light output requested on command line.\n");
+        if (write_litfile & lightfile::external && write_litfile & lightfile::hdr)
+            logging::print(".lit colored E5BGR9 light output requested on command line.\n");
         if (write_litfile & lightfile::bspx)
             logging::print("BSPX colored light output requested on command line.\n");
+        if (write_litfile & lightfile::bspx && write_litfile & lightfile::hdr)
+            logging::print("BSPX colored E5BGR9 light output requested on command line.\n");
         if (write_luxfile & lightfile::external)
             logging::print(".lux light directions output requested on command line.\n");
         if (write_luxfile & lightfile::bspx)
@@ -563,17 +577,21 @@ static std::mutex light_mutex;
  * size is the number of greyscale pixels = number of bytes to allocate
  * and return in *lightdata
  */
-void GetFileSpace(uint8_t **lightdata, uint8_t **colordata, uint8_t **deluxdata, int size)
+void GetFileSpace(uint8_t **lightdata, uint8_t **colordata, uint32_t **hdrdata, uint8_t **deluxdata, int size)
 {
     light_mutex.lock();
 
     *lightdata = *colordata = *deluxdata = nullptr;
+    *hdrdata = nullptr;
 
     if (!filebase.empty()) {
         *lightdata = filebase.data() + file_p;
     }
     if (!lit_filebase.empty()) {
         *colordata = lit_filebase.data() + lit_file_p;
+    }
+    if (!hdr_filebase.empty()) {
+        *hdrdata = hdr_filebase.data() + hdr_file_p;
     }
     if (!lux_filebase.empty()) {
         *deluxdata = lux_filebase.data() + lux_file_p;
@@ -592,6 +610,9 @@ void GetFileSpace(uint8_t **lightdata, uint8_t **colordata, uint8_t **deluxdata,
     if (!lit_filebase.empty()) {
         lit_file_p += 3 * size;
     }
+    if (!hdr_filebase.empty()) {
+        hdr_file_p += size;
+    }
     if (!lux_filebase.empty()) {
         lux_file_p += 3 * size;
     }
@@ -603,13 +624,16 @@ void GetFileSpace(uint8_t **lightdata, uint8_t **colordata, uint8_t **deluxdata,
 
     if (lit_file_p > lit_file_end)
         FError("overrun");
+
+    if (hdr_file_p > hdr_file_end)
+        FError("overrun");
 }
 
 /**
  * Special version of GetFileSpace for when we're relighting a .bsp and can't modify it.
  * In this case the offsets are already known.
  */
-void GetFileSpace_PreserveOffsetInBsp(uint8_t **lightdata, uint8_t **colordata, uint8_t **deluxdata, int lightofs)
+void GetFileSpace_PreserveOffsetInBsp(uint8_t **lightdata, uint8_t **colordata, uint32_t **hdrdata, uint8_t **deluxdata, int lightofs)
 {
     Q_assert(lightofs >= 0);
 
@@ -621,6 +645,10 @@ void GetFileSpace_PreserveOffsetInBsp(uint8_t **lightdata, uint8_t **colordata, 
 
     if (colordata && !lit_filebase.empty()) {
         *colordata = lit_filebase.data() + (lightofs * 3);
+    }
+
+    if (hdrdata && !hdr_filebase.empty()) {
+        *hdrdata = hdr_filebase.data() + lightofs;
     }
 
     if (deluxdata && !lux_filebase.empty()) {
@@ -871,6 +899,7 @@ static void LightWorld(bspdata_t *bspdata, bool forcedscale)
     light_surfaces.clear();
     filebase.clear();
     lit_filebase.clear();
+    hdr_filebase.clear();
     lux_filebase.clear();
 
     if (!bsp.loadversion->game->has_rgb_lightmap) {
@@ -885,6 +914,13 @@ static void LightWorld(bspdata_t *bspdata, bool forcedscale)
         lit_filebase.resize(MAX_MAP_LIGHTING * 3);
         lit_file_p = 0;
         lit_file_end = (MAX_MAP_LIGHTING * 3);
+    }
+
+    if (bsp.loadversion->game->has_rgb_lightmap || light_options.write_litfile) {
+        /* hdr data stored in a separate buffer */
+        hdr_filebase.resize(MAX_MAP_LIGHTING);
+        hdr_file_p = 0;
+        hdr_file_end = MAX_MAP_LIGHTING;
     }
 
     if (light_options.write_luxfile) {
@@ -1643,6 +1679,7 @@ int light_main(int argc, const char **argv)
 
         /*invalidate any bspx lighting info early*/
         bspdata.bspx.entries.erase("RGBLIGHTING");
+        bspdata.bspx.entries.erase("LIGHTING_E5BGR9");
         bspdata.bspx.entries.erase("LIGHTINGDIR");
 
         if (light_options.write_litfile == lightfile::lit2) {
@@ -1657,6 +1694,10 @@ int light_main(int argc, const char **argv)
         if (light_options.write_litfile & lightfile::bspx) {
             lit_filebase.resize(bsp.dlightdata.size() * 3);
             bspdata.bspx.transfer("RGBLIGHTING", lit_filebase);
+        }
+        if (light_options.write_litfile & lightfile::bspx && light_options.write_litfile & lightfile::hdr) {
+            hdr_filebase.resize(bsp.dlightdata.size());
+            bspdata.bspx.transfer("LIGHTING_E5BGR9", hdr_filebase);
         }
         if (light_options.write_luxfile & lightfile::external) {
             WriteLuxFile(&bsp, source, LIT_VERSION);

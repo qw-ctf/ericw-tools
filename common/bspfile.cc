@@ -2479,6 +2479,22 @@ void bspdata_t::bspxentries::transfer(const char *xname, std::vector<uint8_t> &&
     entries.insert_or_assign(xname, xdata);
 }
 
+// get rid of this, just stupid
+void bspdata_t::bspxentries::transfer(const char *xname, std::vector<uint32_t> &xdata)
+{
+    std::vector<uint8_t> output;
+    output.reserve(xdata.size() * 4);
+
+    for (uint32_t value : xdata) {
+        output.push_back(static_cast<uint8_t>(value & 0xFF));
+        output.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        output.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+        output.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+    }
+
+    entries.insert_or_assign(xname, std::move(output));
+}
+
 /*
  * =============
  * LoadBSPFile

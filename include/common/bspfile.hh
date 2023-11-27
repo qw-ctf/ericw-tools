@@ -437,6 +437,9 @@ struct bspdata_t
         void transfer(const char *xname, std::vector<uint8_t> &xdata);
 
         // transfer ownership of the vector into a BSPX lump
+        void transfer(const char *xname, std::vector<uint32_t> &xdata);
+
+        // transfer ownership of the vector into a BSPX lump
         void transfer(const char *xname, std::vector<uint8_t> &&xdata);
     };
 

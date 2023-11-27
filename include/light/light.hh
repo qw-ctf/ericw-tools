@@ -172,7 +172,8 @@ enum class lightfile
     external = 1,
     bspx = 2,
     both = external | bspx,
-    lit2 = 4
+    lit2 = 4,
+    hdr = 8,
 };
 
 /* tracelist is a std::vector of pointers to modelinfo_t to use for LOS tests */
@@ -390,6 +391,8 @@ public:
     setting_func lit;
     setting_func lit2;
     setting_func bspxlit;
+    setting_func hdr;
+    setting_func bspxhdr;
     setting_func lux;
     setting_func bspxlux;
     setting_func bspxonly;
@@ -432,6 +435,7 @@ extern settings::light_settings light_options;
 
 extern std::vector<uint8_t> filebase;
 extern std::vector<uint8_t> lit_filebase;
+extern std::vector<uint32_t> hdr_filebase;
 extern std::vector<uint8_t> lux_filebase;
 
 const std::unordered_map<int, std::vector<uint8_t>> &UncompressedVis();
@@ -446,8 +450,8 @@ extern std::vector<surfflags_t> extended_texinfo_flags;
 // public functions
 
 void FixupGlobalSettings(void);
-void GetFileSpace(uint8_t **lightdata, uint8_t **colordata, uint8_t **deluxdata, int size);
-void GetFileSpace_PreserveOffsetInBsp(uint8_t **lightdata, uint8_t **colordata, uint8_t **deluxdata, int lightofs);
+void GetFileSpace(uint8_t **lightdata, uint8_t **colordata, uint32_t **hdrdata, uint8_t **deluxdata, int size);
+void GetFileSpace_PreserveOffsetInBsp(uint8_t **lightdata, uint8_t **colordata, uint32_t **hdrdata, uint8_t **deluxdata, int lightofs);
 const modelinfo_t *ModelInfoForModel(const mbsp_t *bsp, int modelnum);
 /**
  * returns nullptr for "skip" faces

@@ -2406,14 +2406,6 @@ inline void LightFace_ScaleAndClamp(lightsurf_t *lightsurf)
                     c = pow(c / 255.0f, 1.0 / cfg.lightmapgamma.value()) * 255.0f;
                 }
             }
-
-            // clamp
-            // FIXME: should this be a brightness clamp?
-            vec_t maxcolor = qv::max(color);
-
-            if (maxcolor > 255.0) {
-                color *= (255.0 / maxcolor);
-            }
         }
     }
 }
@@ -2838,13 +2830,44 @@ bool Face_IsEmissive(const mbsp_t *bsp, const mface_t *face)
     return bsp->loadversion->game->surf_is_emissive(texinfo->flags, texname);
 }
 
+static unsigned int HDR_PackResult(qvec4f rgba)
+{
+#define HDR_ONE 128.0f //logical value for 1.0 lighting (quake's overbrights give 255).
+    //we want 0-1-like values. except that we can oversample and express smaller values too.
+    float r = rgba[0]/HDR_ONE;
+    float g = rgba[1]/HDR_ONE;
+    float b = rgba[2]/HDR_ONE;
+
+    int e = 0;
+    float m = std::max(std::max(r, g), b);
+    float scale;
+
+    if (m >= 0.5f)
+    {   //positive exponent
+        while (m >= (1<<(e)) && e < 30-15)  //don't do nans.
+            e++;
+    }
+    else
+    {   //negative exponent...
+        while (m < 1/(1<<-e) && e > -15)    //don't do nans.
+            e--;
+    }
+
+    scale = pow(2, e-9);
+
+    return ((e+15)<<27) |
+       (std::min((int)(b/scale + 0.5f), 0x1ff)<<18) |
+       (std::min((int)(g/scale + 0.5f), 0x1ff)<<9) |
+       (std::min((int)(r/scale + 0.5f), 0x1ff)<<0);
+}
+
 /**
  * - Writes (actual_width * actual_height) bytes to `out`
  * - Writes (actual_width * actual_height * 3) bytes to `lit`
  * - Writes (actual_width * actual_height * 3) bytes to `lux`
  */
 static void WriteSingleLightmap(const mbsp_t *bsp, const mface_t *face, const lightsurf_t *lightsurf,
-    const lightmap_t *lm, const int actual_width, const int actual_height, uint8_t *out, uint8_t *lit, uint8_t *lux,
+    const lightmap_t *lm, const int actual_width, const int actual_height, uint8_t *out, uint8_t *lit, uint32_t *hdr, uint8_t *lux,
     const faceextents_t &output_extents)
 {
     const int oversampled_width = actual_width * light_options.extra.value();
@@ -2886,7 +2909,16 @@ static void WriteSingleLightmap(const mbsp_t *bsp, const mface_t *face, const li
             const int sampleindex = (input_sample_t * actual_width) + input_sample_s;
 
             if (lit || out) {
-                const qvec4f &color = output_color.at(sampleindex);
+                qvec4f color = output_color.at(sampleindex);
+
+                if (hdr)
+                    *hdr++ = HDR_PackResult(color);
+
+                const vec_t max_color = qv::max(color);
+                if (max_color > 255.0f)
+                {
+                    color *= 255.0 / max_color;
+                }
 
                 if (lit) {
                     *lit++ = color[0];
@@ -2938,7 +2970,7 @@ static void WriteSingleLightmap(const mbsp_t *bsp, const mface_t *face, const li
  * - Writes (output_width * output_height * 3) bytes to `lux`
  */
 static void WriteSingleLightmap_FromDecoupled(const mbsp_t *bsp, const mface_t *face, const lightsurf_t *lightsurf,
-    const lightmap_t *lm, const int output_width, const int output_height, uint8_t *out, uint8_t *lit, uint8_t *lux)
+    const lightmap_t *lm, const int output_width, const int output_height, uint8_t *out, uint8_t *lit, uint32_t *hdr, uint8_t *lux)
 {
     // this is the lightmap data in the "decoupled" coordinate system
     std::vector<qvec4f> fullres = LightmapColorsToGLMVector(lightsurf, lm);
@@ -2974,10 +3006,19 @@ static void WriteSingleLightmap_FromDecoupled(const mbsp_t *bsp, const mface_t *
             const float coord_frac_y = decoupled_lm_coord[1] - coord_floor_y;
 
             // 2D bilinear interpolation
-            const qvec4f color =
+            qvec4f color =
                 mix(mix(tex(coord_floor_x, coord_floor_y), tex(coord_floor_x + 1, coord_floor_y), coord_frac_x),
                     mix(tex(coord_floor_x, coord_floor_y + 1), tex(coord_floor_x + 1, coord_floor_y + 1), coord_frac_x),
                     coord_frac_y);
+
+            if (hdr)
+                *hdr++ = HDR_PackResult(color);
+
+            const vec_t max_color = qv::max(color);
+            if (max_color > 255.0f)
+            {
+                color *= 255.0 / max_color;
+            }
 
             if (lit || out) {
                 if (lit) {
@@ -3024,7 +3065,8 @@ void SaveLightmapSurface(const mbsp_t *bsp, mface_t *face, facesup_t *facesup,
         }
 
         uint8_t *out, *lit, *lux;
-        GetFileSpace_PreserveOffsetInBsp(&out, &lit, &lux, face->lightofs);
+        uint32_t *hdr;
+        GetFileSpace_PreserveOffsetInBsp(&out, &lit, &hdr, &lux, face->lightofs);
 
         for (int mapnum = 0; mapnum < MAXLIGHTMAPS; mapnum++) {
             const int style = face->styles[mapnum];
@@ -3037,7 +3079,7 @@ void SaveLightmapSurface(const mbsp_t *bsp, mface_t *face, facesup_t *facesup,
             for (const lightmap_t &lm : lightmaps) {
                 if (lm.style == style) {
                     WriteSingleLightmap(
-                        bsp, face, lightsurf, &lm, actual_width, actual_height, out, lit, lux, output_extents);
+                        bsp, face, lightsurf, &lm, actual_width, actual_height, out, lit, hdr, lux, output_extents);
                     break;
                 }
             }
@@ -3184,7 +3226,8 @@ void SaveLightmapSurface(const mbsp_t *bsp, mface_t *face, facesup_t *facesup,
         return;
 
     uint8_t *out, *lit, *lux;
-    GetFileSpace(&out, &lit, &lux, size * numstyles);
+    uint32_t *hdr;
+    GetFileSpace(&out, &lit, &hdr, &lux, size * numstyles);
 
     int lightofs;
 
@@ -3212,7 +3255,7 @@ void SaveLightmapSurface(const mbsp_t *bsp, mface_t *face, facesup_t *facesup,
     for (int mapnum = 0; mapnum < numstyles; mapnum++) {
         const lightmap_t *lm = sorted.at(mapnum);
 
-        WriteSingleLightmap(bsp, face, lightsurf, lm, actual_width, actual_height, out, lit, lux, output_extents);
+        WriteSingleLightmap(bsp, face, lightsurf, lm, actual_width, actual_height, out, lit, hdr, lux, output_extents);
 
         if (out) {
             out += size;
@@ -3228,7 +3271,7 @@ void SaveLightmapSurface(const mbsp_t *bsp, mface_t *face, facesup_t *facesup,
     // write vanilla lightmap if -world_units_per_luxel is in use but not -novanilla
     if (facesup_decoupled && !light_options.novanilla.value()) {
         // FIXME: duplicates some code from above
-        GetFileSpace(&out, &lit, &lux, lightsurf->vanilla_extents.numsamples() * numstyles);
+        GetFileSpace(&out, &lit, &hdr, &lux, lightsurf->vanilla_extents.numsamples() * numstyles);
 
         // Q2/HL native colored lightmaps
         if (bsp->loadversion->game->has_rgb_lightmap) {
@@ -3242,13 +3285,16 @@ void SaveLightmapSurface(const mbsp_t *bsp, mface_t *face, facesup_t *facesup,
             const lightmap_t *lm = sorted.at(mapnum);
 
             WriteSingleLightmap_FromDecoupled(bsp, face, lightsurf, lm, lightsurf->vanilla_extents.width(),
-                lightsurf->vanilla_extents.height(), out, lit, lux);
+                lightsurf->vanilla_extents.height(), out, lit, hdr, lux);
 
             if (out) {
                 out += lightsurf->vanilla_extents.numsamples();
             }
             if (lit) {
                 lit += (lightsurf->vanilla_extents.numsamples() * 3);
+            }
+            if (hdr) {
+                hdr += (lightsurf->vanilla_extents.numsamples());
             }
             if (lux) {
                 lux += (lightsurf->vanilla_extents.numsamples() * 3);

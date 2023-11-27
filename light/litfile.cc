@@ -83,8 +83,12 @@ void WriteLitFile(const mbsp_t *bsp, const std::vector<facesup_t> &facesup, cons
         }
         litfile.write((const char *)lit_filebase.data(), bsp->dlightdata.size() * 3);
         litfile.write((const char *)lux_filebase.data(), bsp->dlightdata.size() * 3);
-    } else
-        litfile.write((const char *)lit_filebase.data(), bsp->dlightdata.size() * 3);
+    } else {
+        if ((version & 0xffff0000)==0x00010000)
+            litfile.write((const char *)hdr_filebase.data(), bsp->dlightdata.size() * 4);
+        else
+            litfile.write((const char *)lit_filebase.data(), bsp->dlightdata.size() * 3);
+    }
 }
 
 void WriteLuxFile(const mbsp_t *bsp, const fs::path &filename, int version)
