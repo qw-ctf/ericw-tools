@@ -92,6 +92,9 @@ private:
     float m_displayAspect;
     QVector3D m_cameraOrigin;
     QVector3D m_cameraFwd; // unit vec
+    QVector3D m_cullOrigin;
+    QMatrix4x4 m_cullViewMatrix;
+    QMatrix4x4 m_cullModelMatrix;
     QVector3D cameraRight() const
     {
         QVector3D v = QVector3D::crossProduct(m_cameraFwd, QVector3D(0, 0, 1));
@@ -108,6 +111,7 @@ private:
     bool m_showTrisSeeThrough = false;
     bool m_drawFlat = false;
     bool m_keepOrigin = false;
+    bool m_keepCullOrigin = false;
     bool m_drawPortals = false;
     bool m_drawLeak = false;
     QOpenGLTexture::Filter m_filter = QOpenGLTexture::Linear;
@@ -124,6 +128,11 @@ private:
     QOpenGLVertexArrayObject m_portalVao;
     QOpenGLBuffer m_portalVbo;
     QOpenGLBuffer m_portalIndexBuffer;
+
+    QOpenGLVertexArrayObject m_frustumVao;
+    QOpenGLBuffer m_frustumVbo;
+    QOpenGLBuffer m_frustumFacesIndexBuffer;
+    QOpenGLBuffer m_frustumEdgesIndexBuffer;
 
     struct leaf_vao_t {
         QOpenGLVertexArrayObject vao;
@@ -212,6 +221,8 @@ public:
 
 private:
     void setFaceVisibilityArray(uint8_t *data);
+    static std::vector<QVector3D> getFrustumCorners(float displayAspect);
+    static std::array<QVector4D, 4> getFrustumPlanes(const QMatrix4x4& MVP);
 
 public:
     void renderBSP(const QString &file, const mbsp_t &bsp, const bspxentries_t &bspx,
@@ -228,6 +239,7 @@ public:
     void setVisCulling(bool viscull);
     void setDrawFlat(bool drawflat);
     void setKeepOrigin(bool keeporigin);
+    void setKeepCullOrigin(bool keeporigin);
     void setDrawPortals(bool drawportals);
     void setDrawLeak(bool drawleak);
     // intensity = 0 to 200
@@ -245,7 +257,8 @@ protected:
     void resizeGL(int width, int height) override;
 
 private:
-    void updateFaceVisibility();
+    void updateFrustumVBO();
+    void updateFaceVisibility(const std::array<QVector4D, 4>& frustum);
     bool shouldLiveUpdate() const;
     void handleLoggedMessage(const QOpenGLDebugMessage &debugMessage);
 
