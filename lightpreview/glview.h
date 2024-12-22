@@ -21,6 +21,7 @@ See file, 'COPYING', for details.
 
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions_3_3_Core>
+#include <QOpenGLFramebufferObject>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLBuffer>
 #include <QOpenGLShaderProgram>
@@ -135,6 +136,12 @@ private:
     QOpenGLBuffer m_frustumFacesIndexBuffer;
     QOpenGLBuffer m_frustumEdgesIndexBuffer;
 
+    QOpenGLVertexArrayObject m_fullscreenVao;
+    QOpenGLBuffer m_fullscreenVbo;
+    QOpenGLBuffer m_fullscreenIndexBuffer;
+    std::shared_ptr<QOpenGLFramebufferObject> m_wboitFbo;
+    std::shared_ptr<QOpenGLTexture> reveal_texture;
+
     struct leaf_vao_t
     {
         QOpenGLVertexArrayObject vao;
@@ -177,12 +184,16 @@ private:
         size_t index_count = 0;
     };
     std::vector<drawcall_t> m_drawcalls;
+    std::vector<drawcall_t> m_translucent_drawcalls;
     size_t num_leak_points = 0;
     size_t num_portal_indices = 0;
 
     QOpenGLShaderProgram *m_program = nullptr, *m_skybox_program = nullptr;
     QOpenGLShaderProgram *m_program_wireframe = nullptr;
     QOpenGLShaderProgram *m_program_simple = nullptr;
+    QOpenGLShaderProgram *m_program_accum = nullptr;
+    QOpenGLShaderProgram *m_program_reveal = nullptr;
+    QOpenGLShaderProgram *m_program_compose = nullptr;
 
     // uniform locations (default program)
     int m_program_mvp_location = 0;
@@ -198,6 +209,29 @@ private:
     int m_program_style_scalars_location = 0;
     int m_program_brightness_location = 0;
     int m_program_lightmap_scale_location = 0;
+
+    // uniform locations (wboit accum program)
+    int m_program_accum_mvp_location = 0;
+    int m_program_accum_texture_sampler_location = 0;
+    int m_program_accum_lightmap_sampler_location = 0;
+    int m_program_accum_face_visibility_sampler_location = 0;
+    int m_program_accum_opacity_location = 0;
+    int m_program_accum_alpha_test_location = 0;
+    int m_program_accum_lightmap_only_location = 0;
+    int m_program_accum_fullbright_location = 0;
+    int m_program_accum_drawnormals_location = 0;
+    int m_program_accum_drawflat_location = 0;
+    int m_program_accum_style_scalars_location = 0;
+    int m_program_accum_brightness_location = 0;
+    int m_program_accum_lightmap_scale_location = 0;
+
+    // uniform locations (wboit reveal program)
+    int m_program_reveal_mvp_location = 0;
+    int m_program_reveal_face_visibility_sampler_location = 0;
+    int m_program_reveal_opacity_location = 0;
+
+    int m_program_compose_accum_location = 0;
+    int m_program_compose_reveal_location = 0;
 
     // uniform locations (skybox program)
     int m_skybox_program_mvp_location = 0;
@@ -231,6 +265,8 @@ private:
     static bool isVolumeInFrustum(const std::array<QVector4D, 4> &frustum, const qvec3f &mins, const qvec3f &maxs);
     static std::vector<QVector3D> getFrustumCorners(float displayAspect);
     static std::array<QVector4D, 4> getFrustumPlanes(const QMatrix4x4 &MVP);
+    void createTransparencyFramebuffer(int width, int height);
+
 
 public:
     void renderBSP(const QString &file, const mbsp_t &bsp, const bspxentries_t &bspx,

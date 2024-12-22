@@ -45,6 +45,7 @@ int main(int argc, char *argv[])
     QSurfaceFormat fmt;
     fmt.setVersion(3, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
+    fmt.setDepthBufferSize(32);
 #ifdef _DEBUG
     fmt.setOption(QSurfaceFormat::DebugContext);
 #endif
